@@ -4,11 +4,11 @@ library(survminer)
 library(dplyr)
 library(ggplot2)
 library(DT)
-ui <- fluidPage(titlePanel("Mixture Weibull Trial Simulator"),
+ui <- fluidPage(titlePanel("Mixture Weibull Progression-Death Process Simulator v1"),
   sidebarLayout(
     sidebarPanel(
       h3("Simulation Parameters"),      
-      numericInput("n", "Total Sample Size:", value = 200, min = 10, max = 10000),
+      numericInput("n", "Total Sample Size:", value = 400, min = 10, max = 10000),
       numericInput("allocation_ratio", "Treatment:Control Allocation Ratio:", value = 1, min = 0.1, max = 10, step = 0.1),
       helpText("Example: 1 = 1:1 (50% each), 2 = 2:1 (67% treatment, 33% control)"),      
       h4("Progression Parameters - Control"),
@@ -284,7 +284,7 @@ server <- function(input, output, session) {
       palette = c("#2196F3", "#F44336"),  # Blue (Control) and Red (Treatment) colors
       pval = TRUE,
       pval.method = TRUE)
-    y_positions <- list("Control" = 0.45, "Treatment" = 0.35)
+    y_positions <- list("Control" = 0.95, "Treatment" = 0.85)
     colors <- list("Control" = "#2196F3", "Treatment" = "#F44336")
     for (i in 1:nrow(median_data)) {
       if (!is.na(median_data$median[i])) {
@@ -330,7 +330,7 @@ server <- function(input, output, session) {
       pval = TRUE,
       pval.method = TRUE)
     # Add median lines and labels for each arm
-    y_positions <- list("Control" = 0.45, "Treatment" = 0.35)
+    y_positions <- list("Control" = 0.95, "Treatment" = 0.85)
     colors <- list("Control" = "#2196F3", "Treatment" = "#F44336")
     for (i in 1:nrow(median_data)) {
       if (!is.na(median_data$median[i])) {
@@ -349,13 +349,7 @@ server <- function(input, output, session) {
     cat("=== Progression-Free Survival Summary by Treatment Arm ===\n\n")
     fit_pfs <- survfit(Surv(pfs_time, pfs_event) ~ arm, data = data)
     cat("Overall Summary:\n")
-    print(summary(fit_pfs))    
-    cat("\n\n=== By Treatment Arm ===\n")
-    for (arm in unique(data$arm)) {
-      cat("\n", arm, "Arm:\n")
-      arm_data <- data[data$arm == arm, ]
-      fit_arm <- survfit(Surv(pfs_time, pfs_event) ~ 1, data = arm_data)
-      print(summary(fit_arm))}})
+    print(fit_pfs)})
   output$os_summary <- renderPrint({
     sim_result <- simulated_data()
     if (is.null(sim_result)) {return(cat("Click 'Generate Simulation' to create data"))}
@@ -364,21 +358,15 @@ server <- function(input, output, session) {
     cat("=== Overall Survival Summary by Treatment Arm ===\n\n")
     fit_os <- survfit(Surv(os_time, os_event) ~ arm, data = data)
     cat("Overall Summary:\n")
-    print(summary(fit_os))
-    cat("\n\n=== By Treatment Arm ===\n")
-    for (arm in unique(data$arm)) {
-      cat("\n", arm, "Arm:\n")
-      arm_data <- data[data$arm == arm, ]
-      fit_arm <- survfit(Surv(os_time, os_event) ~ 1, data = arm_data)
-      print(summary(fit_arm))}})
+    print(fit_os)})
   # Observer to update lambda input fields with calculated values
   observeEvent(simulated_data(), {
     sim_result <- simulated_data()
     if (!is.null(sim_result)) {
       # Update the lambda input fields with the calculated values
-      updateNumericInput(session, "lamb12", value = round(sim_result$lamb12, 6))
-      updateNumericInput(session, "lamb13", value = round(sim_result$lamb13, 6))
-      updateNumericInput(session, "lamb23", value = round(sim_result$lamb23, 6))
+      updateNumericInput(session, "lamb12", value = sim_result$lamb12)
+      updateNumericInput(session, "lamb13", value = sim_result$lamb13)
+      updateNumericInput(session, "lamb23", value = sim_result$lamb23)
     }
   })
 
