@@ -242,9 +242,10 @@ server <- function(input, output, session) {
 
     # Calculate lambda values from final scale parameters
     # Relationship: scale_param = (1/lambda)^(1/shape), so lambda = 1/(scale_param^shape)
-    calculated_lamb12 <- 1 / (prog_control$final_scale^nv12)
-    calculated_lamb13 <- 1 / (surv_control$final_scale_13^nv13)
-    calculated_lamb23 <- 1 / (surv_control$final_scale_23^nv23)
+    # Use as.numeric() to ensure values are unnamed scalars (avoid jsonlite named vector warning)
+    calculated_lamb12 <- as.numeric(1 / (prog_control$final_scale^nv12))
+    calculated_lamb13 <- as.numeric(1 / (surv_control$final_scale_13^nv13))
+    calculated_lamb23 <- as.numeric(1 / (surv_control$final_scale_23^nv23))
 
     list(
       data = combined_data,
