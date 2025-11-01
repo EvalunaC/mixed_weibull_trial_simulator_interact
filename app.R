@@ -4,9 +4,7 @@ library(survminer)
 library(dplyr)
 library(ggplot2)
 library(DT)
-
-ui <- fluidPage(
-  titlePanel("Mixed Weibull Trial Simulator"),
+ui <- fluidPage(titlePanel("Mixture Weibull Trial Simulator"),
   sidebarLayout(
     sidebarPanel(
       h3("Simulation Parameters"),      
@@ -34,9 +32,8 @@ ui <- fluidPage(
       helpText("Set to 0 to auto-calculate from median."),
       p("Survival has two pathways: death without progression (nv13) and death after progression (nv23). Overall survival median will be adjusted to match target."),
       h4("Censoring"),
-      numericInput("max_followup", "Maximum Follow-up Time:", value = 24, min = 1, max = 200, step = 1),
-      actionButton("simulate", "Generate Simulation", class = "btn-primary"),      
-      br(), br(),
+      numericInput("max_followup", "Maximum Follow-up Time:", value = 30, min = 1, max = 200, step = 1),
+      actionButton("simulate", "Generate Simulation", class = "btn-primary"), br(), br(),
       h4("Notes"),
       p("This tool simulates multi-state survival data with two pathways:",
         tags$ul(
@@ -46,18 +43,9 @@ ui <- fluidPage(
           tags$li("Overall survival = min(death_without_prog, progression_time + death_after_prog)")))),
     mainPanel(
       tabsetPanel(
-        tabPanel("Progression-Free Survival",
-                 plotOutput("pfs_plot", height = "600px"),
-                 h4("Summary Statistics"),
-                 verbatimTextOutput("pfs_summary")),
-        tabPanel("Overall Survival",
-                 plotOutput("os_plot", height = "600px"),
-                 h4("Summary Statistics"),
-                 verbatimTextOutput("os_summary")),
-        tabPanel("Simulated Data",
-                 h4("First 100 rows of simulated data"),
-                 DT::dataTableOutput("data_table"),
-                 downloadButton("download_data", "Download Full Dataset", class = "btn-default"))))))
+        tabPanel("Progression-Free Survival",plotOutput("pfs_plot", height = "600px"),h4("Summary Statistics"),verbatimTextOutput("pfs_summary")),
+        tabPanel("Overall Survival",plotOutput("os_plot", height = "600px"),h4("Summary Statistics"),verbatimTextOutput("os_summary")),
+        tabPanel("Simulated Data",h4("First 100 rows of simulated data"),DT::dataTableOutput("data_table"),downloadButton("download_data", "Download Full Dataset", class = "btn-default"))))))
 server <- function(input, output, session) {
   # Calculate Weibull scale parameter from median and shape
   # For Weibull with shape k and scale s: S(t) = exp(-(t/s)^k)
@@ -70,40 +58,39 @@ server <- function(input, output, session) {
   calculate_lambda_from_median <- function(median_time, shape) {log(2)/(median_time^shape)}
   # Calculate hazard for transition 1->2 (progression)
   # hazd12 = nv12 * lambda12 * T^(nv12-1) * exp(modmat %*% beta12)
-  calculate_hazard_12 <- function(t, nv12, lamb12, beta12 = 0, modmat = matrix(1)) {nv12*lamb12*(t^(nv12-1))*exp(modmat%*%beta12)} 
+  calculate_hazard_12 <- function(t,nv12,lamb12, beta12 = 0, modmat = matrix(1)){nv12*lamb12*(t^(nv12-1))*exp(modmat%*%beta12)} 
   # Calculate hazard for transition 2->3 (death after progression)
-  calculate_hazard_23 <- function(t, nv23, lamb23, beta23 = 0, modmat = matrix(1)) {nv23*lamb23*(t^(nv23-1))*exp(modmat%*%beta23)}
+  calculate_hazard_23 <- function(t,nv23,lamb23, beta23 = 0, modmat = matrix(1)){nv23*lamb23*(t^(nv23-1))*exp(modmat%*%beta23)}
   # Simulate progression time using Weibull with iterative refinement
-  simulate_progression <- function(n, nv12, lamb12, target_median, max_followup) {tolerance<-0.1 
-    max_iterations <- 100  # More iterations allowed
-    # Initialize scale parameter
-    if (!is.na(lamb12) && lamb12 > 0) {
+  simulate_progression <- function(n,nv12,lamb12, target_median, max_followup){tolerance<-0.01
+    max_iterations<-500  # More iterations allowed
+    #Initialize scale parameter
+    if (!is.na(lamb12)&&lamb12>0){
       # Use provided lambda to calculate scale for R's rweibull
-      scale_param <- (1/lamb12)^(1/nv12)
-    } else {
+      scale_param<-(1/lamb12)^(1/nv12)
+    }else{
       # Calculate initial scale to match target median
       scale_param <- calculate_scale_from_median(target_median, nv12)}
     # Initialize variables
     actual_median <- target_median
     iter <- 0
     # Iterative refinement to ensure observed median is within tolerance
-    for (iter in 1:max_iterations) {
+    for (iter in 1:max_iterations){
       # Simulate using Weibull distribution
-      prog_time <- rweibull(n, shape = nv12, scale = scale_param)
+      prog_time <- rweibull(n, shape = nv12,scale=scale_param)
       cens_time <- runif(n, 0, max_followup)
       prog_observed <- pmin(prog_time, cens_time)
       prog_event <- as.numeric(prog_time <= cens_time)
       # Calculate observed median using Kaplan-Meier estimator (correct method for censored data)
-      fit <- survfit(Surv(prog_observed, prog_event) ~ 1)
+      fit <- survfit(Surv(prog_observed, prog_event)~1)
       actual_median <- summary(fit)$table["median"]
       # Handle case where median cannot be estimated (e.g., too much censoring)
-      if (is.na(actual_median) || is.null(actual_median) || actual_median == 0) {
+      if (is.na(actual_median) || is.null(actual_median)||actual_median == 0) {
         # Fall back to simple median as last resort
         actual_median <- median(prog_observed)}
       difference <- abs(actual_median - target_median)
       if (difference <= tolerance) {
-        cat(sprintf("Progression converged in %d iterations (median: %.2f, target: %.2f)\n",
-                    iter, actual_median, target_median))
+        cat(sprintf("Progression converged in %d iterations (median: %.2f, target: %.2f)\n",iter, actual_median, target_median))
         break}
       adjustment_factor <- target_median/actual_median
       if (adjustment_factor >1.5) adjustment_factor <-1.5
@@ -120,22 +107,20 @@ server <- function(input, output, session) {
   # 1. State 1 → State 3 (death without progression): Weibull(nv13, lambda13)
   # 2. State 1 → State 2 → State 3 (death after progression): progression_time + Weibull(nv23, lambda23)
   simulate_survival <- function(n, nv13, lamb13, nv23, lamb23, target_median, prog_times, max_followup) {
-    tolerance <- 0.1  # Relaxed tolerance for survival (harder to converge due to competing risks)
-    max_iterations <- 100 
+    tolerance <- 0.01  # Relaxed tolerance for survival (harder to converge due to competing risks)
+    max_iterations <- 500 
     # Generate censoring times once (will be reused for consistency)
     cens_time <- runif(n, 0, max_followup)
     # For death without progression (State 1 → State 3)
     if (!is.na(lamb13) && lamb13 > 0) {
       scale_param_13 <- (1/lamb13)^(1/nv13)
-    } else {
+    } else {scale_param_13 <- calculate_scale_from_median(target_median, nv13)}
       # Use target_median directly as starting point for better convergence
-      scale_param_13 <- calculate_scale_from_median(target_median, nv13)}
     # For death after progression (State 2 → State 3)
     if (!is.na(lamb23) && lamb23 > 0) {
       scale_param_23 <- (1/lamb23)^(1/nv23)
-    }else{
+    }else{scale_param_23 <- calculate_scale_from_median(target_median, nv23)}
       # Use target_median directly as starting point
-      scale_param_23 <- calculate_scale_from_median(target_median, nv23)}
     # Initialize variables
     actual_median<-target_median
     iter <- 0
@@ -157,7 +142,6 @@ server <- function(input, output, session) {
       # Calculate observed median using Kaplan-Meier estimator (correct method for censored data)
       fit <- survfit(Surv(os_observed, os_event) ~ 1)
       actual_median <- summary(fit)$table["median"]
-
       # Handle case where median cannot be estimated (e.g., too much censoring)
       if (is.na(actual_median) || is.null(actual_median) || actual_median == 0) {
         # Fall back to simple median as last resort
@@ -176,7 +160,6 @@ server <- function(input, output, session) {
         cat(sprintf("Survival converged (oscillating) in %d iterations (median: %.2f, target: %.2f)\n",
                     iter, actual_median, target_median))
         break}
-
       # Adjust scale parameters to move median toward target
       # Adjust both parameters proportionally
       adjustment_factor <- target_median / actual_median
@@ -187,10 +170,7 @@ server <- function(input, output, session) {
 
       scale_param_13 <- scale_param_13 * adjustment_factor
       scale_param_23 <- scale_param_23 * adjustment_factor
-
-      prev_median <- actual_median
-    }
-
+      prev_median <- actual_median}
     if (iter == max_iterations) {
       cat(sprintf("Warning: Survival did not fully converge after %d iterations (median: %.2f, target: %.2f, diff: %.2f)\n",
                   max_iterations, actual_median, target_median, abs(actual_median - target_median)))}
@@ -200,13 +180,11 @@ server <- function(input, output, session) {
     death_after_prog_time <- rweibull(n, shape = nv23, scale = scale_param_23)
     death_after_prog <- prog_times + death_after_prog_time
     os_time <- pmin(death_without_prog, death_after_prog)
-
     os_observed <- pmin(os_time, cens_time)
     # Event = 1 if death occurred before censoring, 0 if censored
     os_event <- as.numeric(os_time <= cens_time)
-
     # Verify os_event was created correctly
-    if (length(os_event) != n || any(is.na(os_event))) {
+    if (length(os_event)!=n||any(is.na(os_event))) {
       stop("Error: os_event not properly generated")}
     list(time = os_observed, event = os_event, true_time = os_time, iterations = iter,
          final_scale_13 = scale_param_13, final_scale_23 = scale_param_23)}
@@ -268,7 +246,6 @@ server <- function(input, output, session) {
     
     fit_pfs <- survfit(Surv(pfs_time, pfs_event) ~ arm, data = data)
     median_data <- data.frame(arm = c("Control", "Treatment"),median = NA)
-    
     for (i in 1:length(fit_pfs$strata)) {
       arm_name <- names(fit_pfs$strata)[i]
       arm_level <- gsub("arm=", "", arm_name)
@@ -344,7 +321,7 @@ server <- function(input, output, session) {
           geom_vline(xintercept = median_val, linetype = "dashed",color = colors[[arm_name]], linewidth = 1) +
           annotate("text",x=median_val,y=y_positions[[arm_name]],label = median_label,color=colors[[arm_name]], hjust = -0.1, size =4,fontface = "bold")}}    
     print(p)})
-  output$pfs_summary <- renderPrint({
+    output$pfs_summary <- renderPrint({
     data<-simulated_data()
     if (is.null(data)||nrow(data) == 0) {
       return(cat("Click 'Generate Simulation' to create data"))}
@@ -377,5 +354,4 @@ server <- function(input, output, session) {
     head(data, 100)}, options = list(pageLength = 10, scrollX = TRUE))
   output$download_data <- downloadHandler(
     filename = function() {paste0("simulated_trial_data_", Sys.Date(), ".csv")}, content = function(file) {write.csv(simulated_data(), file, row.names = FALSE)})}
-
 shinyApp(ui = ui, server = server)
