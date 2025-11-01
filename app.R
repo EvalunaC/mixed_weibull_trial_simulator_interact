@@ -48,6 +48,10 @@ ui <- fluidPage(titlePanel("Mixture Weibull Trial Simulator"),
         tabPanel("Calculated Parameters",h4("Auto-Calculated Lambda Values"),verbatimTextOutput("calculated_params"),p("These are the lambda values that were auto-calculated to achieve the target median times. You can copy these values back into the input fields to use them as fixed parameters.")),
         tabPanel("Simulated Data",h4("First 100 rows of simulated data"),DT::dataTableOutput("data_table"),downloadButton("download_data", "Download Full Dataset", class = "btn-default"))))))
 server <- function(input, output, session) {
+  # Define plot aesthetics constants as named lists (avoiding jsonlite warnings)
+  plot_y_positions <- list(Control = 0.45, Treatment = 0.35)
+  plot_colors <- list(Control = "#2196F3", Treatment = "#F44336")
+
   # Calculate Weibull scale parameter from median and shape
   # For Weibull with shape k and scale s: S(t) = exp(-(t/s)^k)
   # Median occurs when S(t) = 0.5, so: 0.5 = exp(-(median/s)^k)
@@ -283,19 +287,18 @@ server <- function(input, output, session) {
       palette = c("#2196F3", "#F44336"),  # Blue (Control) and Red (Treatment) colors
       pval = TRUE,
       pval.method = TRUE)
-    y_positions <- list("Control" = 0.45, "Treatment" = 0.35)
-    colors <- list("Control" = "#2196F3", "Treatment" = "#F44336")
+    # Use pre-defined constants to avoid jsonlite named vector warnings
     for (i in 1:nrow(median_data)) {
       if (!is.na(median_data$median[i])) {
         arm_name <- median_data$arm[i]
         median_val <- median_data$median[i]
-        median_label <- paste0(arm_name, " Median: ", round(median_val, 2))        
-        p$plot <- p$plot+ 
-          geom_vline(xintercept = median_val, linetype = "dashed", 
-                    color = colors[[arm_name]], linewidth = 1) +
-          annotate("text", x = median_val, y = y_positions[[arm_name]], 
-                  label = median_label, 
-                  color = colors[[arm_name]], hjust = -0.1, size = 4, fontface = "bold")}}
+        median_label <- paste0(arm_name, " Median: ", round(median_val, 2))
+        p$plot <- p$plot+
+          geom_vline(xintercept = median_val, linetype = "dashed",
+                    color = plot_colors[[arm_name]], linewidth = 1) +
+          annotate("text", x = median_val, y = plot_y_positions[[arm_name]],
+                  label = median_label,
+                  color = plot_colors[[arm_name]], hjust = -0.1, size = 4, fontface = "bold")}}
     print(p)})
   output$os_plot <- renderPlot({
     sim_result <- simulated_data()
@@ -328,17 +331,15 @@ server <- function(input, output, session) {
       palette = c("#2196F3", "#F44336"),  # Blue (Control) and Red (Treatment) colors
       pval = TRUE,
       pval.method = TRUE)
-    # Add median lines and labels for each arm
-    y_positions <- list("Control" = 0.45, "Treatment" = 0.35)
-    colors <- list("Control" = "#2196F3", "Treatment" = "#F44336")
+    # Use pre-defined constants to avoid jsonlite named vector warnings
     for (i in 1:nrow(median_data)) {
       if (!is.na(median_data$median[i])) {
         arm_name <- median_data$arm[i]
         median_val <- median_data$median[i]
-        median_label <- paste0(arm_name, " Median: ",round(median_val, 2))
+        median_label <- paste0(arm_name, " Median: ", round(median_val, 2))
         p$plot <- p$plot+
-          geom_vline(xintercept = median_val, linetype = "dashed",color = colors[[arm_name]], linewidth = 1) +
-          annotate("text",x=median_val,y=y_positions[[arm_name]],label = median_label,color=colors[[arm_name]], hjust = -0.1, size =4,fontface = "bold")}}    
+          geom_vline(xintercept = median_val, linetype = "dashed", color = plot_colors[[arm_name]], linewidth = 1) +
+          annotate("text", x = median_val, y = plot_y_positions[[arm_name]], label = median_label, color = plot_colors[[arm_name]], hjust = -0.1, size = 4, fontface = "bold")}}    
     print(p)})
     output$pfs_summary <- renderPrint({
     sim_result <- simulated_data()
