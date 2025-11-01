@@ -45,6 +45,7 @@ ui <- fluidPage(titlePanel("Mixture Weibull Trial Simulator"),
       tabsetPanel(
         tabPanel("Progression-Free Survival",plotOutput("pfs_plot", height = "600px"),h4("Summary Statistics"),verbatimTextOutput("pfs_summary")),
         tabPanel("Overall Survival",plotOutput("os_plot", height = "600px"),h4("Summary Statistics"),verbatimTextOutput("os_summary")),
+        tabPanel("Calculated Parameters",h4("Auto-Calculated Lambda Values"),verbatimTextOutput("calculated_params"),p("These are the lambda values that were auto-calculated to achieve the target median times. You can copy these values back into the input fields to use them as fixed parameters.")),
         tabPanel("Simulated Data",h4("First 100 rows of simulated data"),DT::dataTableOutput("data_table"),downloadButton("download_data", "Download Full Dataset", class = "btn-default"))))))
 server <- function(input, output, session) {
   # Calculate Weibull scale parameter from median and shape
@@ -238,12 +239,28 @@ server <- function(input, output, session) {
       missing_cols <- setdiff(required_cols, names(combined_data))
       stop(paste("Missing columns in output data:", paste(missing_cols, collapse = ", ")))}
     if (!all(combined_data$os_event %in% c(0, 1))) {stop("os_event contains invalid values (should be 0 or 1)")}
-    combined_data})
+
+    # Calculate lambda values from final scale parameters
+    # Relationship: scale_param = (1/lambda)^(1/shape), so lambda = 1/(scale_param^shape)
+    calculated_lamb12 <- 1 / (prog_control$final_scale^nv12)
+    calculated_lamb13 <- 1 / (surv_control$final_scale_13^nv13)
+    calculated_lamb23 <- 1 / (surv_control$final_scale_23^nv23)
+
+    list(
+      data = combined_data,
+      lamb12 = calculated_lamb12,
+      lamb13 = calculated_lamb13,
+      lamb23 = calculated_lamb23,
+      iterations_prog = prog_control$iterations,
+      iterations_surv = surv_control$iterations
+    )})
 
   output$pfs_plot <- renderPlot({
-    data <- simulated_data()
+    sim_result <- simulated_data()
+    if (is.null(sim_result)) {return(NULL)}
+    data <- sim_result$data
     if (is.null(data) || nrow(data) == 0) {return(NULL)}
-    
+
     fit_pfs <- survfit(Surv(pfs_time, pfs_event) ~ arm, data = data)
     median_data <- data.frame(arm = c("Control", "Treatment"),median = NA)
     for (i in 1:length(fit_pfs$strata)) {
@@ -281,9 +298,11 @@ server <- function(input, output, session) {
                   color = colors[[arm_name]], hjust = -0.1, size = 4, fontface = "bold")}}
     print(p)})
   output$os_plot <- renderPlot({
-    data <- simulated_data()
-    if (is.null(data) || nrow(data) == 0) {
-      return(NULL)}
+    sim_result <- simulated_data()
+    if (is.null(sim_result)) {return(NULL)}
+    data <- sim_result$data
+    if (is.null(data) || nrow(data) == 0) {return(NULL)}
+
     fit_os <- survfit(Surv(os_time, os_event) ~ arm, data = data)
     median_data <- data.frame(
       arm = c("Control", "Treatment"),
@@ -322,9 +341,10 @@ server <- function(input, output, session) {
           annotate("text",x=median_val,y=y_positions[[arm_name]],label = median_label,color=colors[[arm_name]], hjust = -0.1, size =4,fontface = "bold")}}    
     print(p)})
     output$pfs_summary <- renderPrint({
-    data<-simulated_data()
-    if (is.null(data)||nrow(data) == 0) {
-      return(cat("Click 'Generate Simulation' to create data"))}
+    sim_result <- simulated_data()
+    if (is.null(sim_result)) {return(cat("Click 'Generate Simulation' to create data"))}
+    data <- sim_result$data
+    if (is.null(data) || nrow(data) == 0) {return(cat("Click 'Generate Simulation' to create data"))}
     cat("=== Progression-Free Survival Summary by Treatment Arm ===\n\n")
     fit_pfs <- survfit(Surv(pfs_time, pfs_event) ~ arm, data = data)
     cat("Overall Summary:\n")
@@ -336,8 +356,10 @@ server <- function(input, output, session) {
       fit_arm <- survfit(Surv(pfs_time, pfs_event) ~ 1, data = arm_data)
       print(summary(fit_arm))}})
   output$os_summary <- renderPrint({
-    data <- simulated_data()
-    if (is.null(data)||nrow(data) == 0) {return(cat("Click 'Generate Simulation' to create data"))}
+    sim_result <- simulated_data()
+    if (is.null(sim_result)) {return(cat("Click 'Generate Simulation' to create data"))}
+    data <- sim_result$data
+    if (is.null(data) || nrow(data) == 0) {return(cat("Click 'Generate Simulation' to create data"))}
     cat("=== Overall Survival Summary by Treatment Arm ===\n\n")
     fit_os <- survfit(Surv(os_time, os_event) ~ arm, data = data)
     cat("Overall Summary:\n")
@@ -348,10 +370,43 @@ server <- function(input, output, session) {
       arm_data <- data[data$arm == arm, ]
       fit_arm <- survfit(Surv(os_time, os_event) ~ 1, data = arm_data)
       print(summary(fit_arm))}})
+  # Observer to update lambda input fields with calculated values
+  observeEvent(simulated_data(), {
+    sim_result <- simulated_data()
+    if (!is.null(sim_result)) {
+      # Update the lambda input fields with the calculated values
+      updateNumericInput(session, "lamb12", value = round(sim_result$lamb12, 6))
+      updateNumericInput(session, "lamb13", value = round(sim_result$lamb13, 6))
+      updateNumericInput(session, "lamb23", value = round(sim_result$lamb23, 6))
+    }
+  })
+
+  output$calculated_params <- renderPrint({
+    sim_result <- simulated_data()
+    if (is.null(sim_result)) {return(cat("Click 'Generate Simulation' to calculate parameters"))}
+    cat("=== Auto-Calculated Lambda Parameters ===\n\n")
+    cat(sprintf("lambda12 (Progression): %.6f\n", sim_result$lamb12))
+    cat(sprintf("  (With shape nv12 = %.2f, matches progression median)\n\n", input$nv12))
+    cat(sprintf("lambda13 (Death Without Progression): %.6f\n", sim_result$lamb13))
+    cat(sprintf("  (With shape nv13 = %.2f, contributes to overall survival)\n\n", input$nv13))
+    cat(sprintf("lambda23 (Death After Progression): %.6f\n", sim_result$lamb23))
+    cat(sprintf("  (With shape nv23 = %.2f, contributes to overall survival)\n\n", input$nv23))
+    cat("\nConvergence Information:\n")
+    cat(sprintf("  Progression iterations: %d\n", sim_result$iterations_prog))
+    cat(sprintf("  Survival iterations: %d\n", sim_result$iterations_surv))
+    cat("\nNOTE: The lambda values have been automatically filled into the input fields.\n")
+    cat("You can modify them or re-run the simulation to use these calculated values.\n")})
   output$data_table <- DT::renderDataTable({
-    data <- simulated_data()
+    sim_result <- simulated_data()
+    if (is.null(sim_result)) {return(data.frame(message = "Click 'Generate Simulation' to create data"))}
+    data <- sim_result$data
     if (is.null(data) || nrow(data) == 0) {return(data.frame(message = "Click 'Generate Simulation' to create data"))}
     head(data, 100)}, options = list(pageLength = 10, scrollX = TRUE))
   output$download_data <- downloadHandler(
-    filename = function() {paste0("simulated_trial_data_", Sys.Date(), ".csv")}, content = function(file) {write.csv(simulated_data(), file, row.names = FALSE)})}
+    filename = function() {paste0("simulated_trial_data_", Sys.Date(), ".csv")}, content = function(file) {
+      sim_result <- simulated_data()
+      if (!is.null(sim_result) && !is.null(sim_result$data)) {
+        write.csv(sim_result$data, file, row.names = FALSE)
+      }
+    })}
 shinyApp(ui = ui, server = server)
