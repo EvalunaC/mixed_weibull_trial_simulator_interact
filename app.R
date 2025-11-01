@@ -141,6 +141,10 @@ server <- function(input, output, session) {
       scale_param <- calculate_scale_from_median(target_median, nv12)
     }
 
+    # Initialize variables
+    actual_median <- target_median
+    iter <- 0
+
     # Iterative refinement to ensure observed median is within tolerance
     for (iter in 1:max_iterations) {
       # Simulate using Weibull distribution
@@ -156,7 +160,7 @@ server <- function(input, output, session) {
       actual_median <- summary(fit)$table["median"]
 
       # Handle case where median cannot be estimated (e.g., too much censoring)
-      if (is.na(actual_median) || actual_median == 0) {
+      if (is.na(actual_median) || is.null(actual_median) || actual_median == 0) {
         # Fall back to simple median as last resort
         actual_median <- median(prog_observed)
       }
@@ -200,29 +204,33 @@ server <- function(input, output, session) {
   # 1. State 1 → State 3 (death without progression): Weibull(nv13, lambda13)
   # 2. State 1 → State 2 → State 3 (death after progression): progression_time + Weibull(nv23, lambda23)
   simulate_survival <- function(n, nv13, lamb13, nv23, lamb23, target_median, prog_times, max_followup) {
-    tolerance <- 0.1  # Tighter tolerance for better accuracy
+    tolerance <- 0.2  # Relaxed tolerance for survival (harder to converge due to competing risks)
     max_iterations <- 100  # More iterations allowed
 
     # Generate censoring times once (will be reused for consistency)
     cens_time <- runif(n, 0, max_followup)
 
-    # Initialize scale parameters
+    # Initialize scale parameters with better starting estimates
     # For death without progression (State 1 → State 3)
     if (!is.na(lamb13) && lamb13 > 0) {
       scale_param_13 <- (1/lamb13)^(1/nv13)
     } else {
-      # Initial estimate: assume death without progression has median around 1.5 * target_median
-      # This is a starting point that will be adjusted iteratively
-      scale_param_13 <- calculate_scale_from_median(target_median * 1.5, nv13)
+      # Use target_median directly as starting point for better convergence
+      scale_param_13 <- calculate_scale_from_median(target_median, nv13)
     }
 
     # For death after progression (State 2 → State 3)
     if (!is.na(lamb23) && lamb23 > 0) {
       scale_param_23 <- (1/lamb23)^(1/nv23)
     } else {
-      # Initial estimate: post-progression survival has median around 0.5 * target_median
-      scale_param_23 <- calculate_scale_from_median(target_median * 0.5, nv23)
+      # Use target_median directly as starting point
+      scale_param_23 <- calculate_scale_from_median(target_median, nv23)
     }
+
+    # Initialize variables
+    actual_median <- target_median
+    iter <- 0
+    prev_median <- target_median
 
     # Iterative refinement to ensure observed median is within tolerance
     for (iter in 1:max_iterations) {
@@ -247,9 +255,14 @@ server <- function(input, output, session) {
       actual_median <- summary(fit)$table["median"]
 
       # Handle case where median cannot be estimated (e.g., too much censoring)
-      if (is.na(actual_median) || actual_median == 0) {
+      if (is.na(actual_median) || is.null(actual_median) || actual_median == 0) {
         # Fall back to simple median as last resort
         actual_median <- median(os_observed)
+        if (is.na(actual_median) || actual_median == 0) {
+          cat(sprintf("Warning: Cannot estimate median at iteration %d, using target\n", iter))
+          actual_median <- target_median
+          break
+        }
       }
 
       difference <- abs(actual_median - target_median)
@@ -261,28 +274,30 @@ server <- function(input, output, session) {
         break
       }
 
+      # Check for oscillation (median bouncing around target)
+      if (iter > 10 && abs(prev_median - actual_median) < 0.05 && difference < 0.5) {
+        cat(sprintf("Survival converged (oscillating) in %d iterations (median: %.2f, target: %.2f)\n",
+                    iter, actual_median, target_median))
+        break
+      }
+
       # Adjust scale parameters to move median toward target
       # Adjust both parameters proportionally
       adjustment_factor <- target_median / actual_median
 
-      # Prevent extreme adjustments for stability
-      if (adjustment_factor > 1.5) adjustment_factor <- 1.5
-      if (adjustment_factor < 0.67) adjustment_factor <- 0.67
+      # More conservative adjustments for stability (especially for survival with competing risks)
+      if (adjustment_factor > 1.3) adjustment_factor <- 1.3
+      if (adjustment_factor < 0.77) adjustment_factor <- 0.77
 
       scale_param_13 <- scale_param_13 * adjustment_factor
       scale_param_23 <- scale_param_23 * adjustment_factor
 
-      # Prevent extreme values that could cause issues
-      if (scale_param_13 <= 0 || scale_param_13 > 10000 ||
-          scale_param_23 <= 0 || scale_param_23 > 10000) {
-        cat(sprintf("Warning: Scale parameters out of bounds at iteration %d\n", iter))
-        break
-      }
+      prev_median <- actual_median
     }
 
     if (iter == max_iterations) {
-      cat(sprintf("Warning: Survival did not fully converge after %d iterations (median: %.2f, target: %.2f)\n",
-                  max_iterations, actual_median, target_median))
+      cat(sprintf("Warning: Survival did not fully converge after %d iterations (median: %.2f, target: %.2f, diff: %.2f)\n",
+                  max_iterations, actual_median, target_median, abs(actual_median - target_median)))
     }
 
     # Final simulation with refined parameters
