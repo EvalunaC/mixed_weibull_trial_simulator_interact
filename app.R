@@ -75,6 +75,10 @@ server <- function(input, output, session) {
     # Initialize variables
     actual_median <- target_median
     iter <- 0
+    # Variables to store the best simulation
+    best_prog_time <- NULL
+    best_prog_observed <- NULL
+    best_prog_event <- NULL
     # Iterative refinement to ensure observed median is within tolerance
     for (iter in 1:max_iterations){
       # Simulate using Weibull distribution
@@ -89,27 +93,31 @@ server <- function(input, output, session) {
       if (is.na(actual_median) || is.null(actual_median)||actual_median == 0) {
         # Fall back to simple median as last resort
         actual_median <- median(prog_observed)}
-      difference <- abs(actual_median - target_median)
-      if (difference <= tolerance) {
+      difference <- actual_median - target_median
+      if (abs(difference) <= tolerance) {
         cat(sprintf("Progression converged in %d iterations (median: %.2f, target: %.2f)\n",iter, actual_median, target_median))
+        # Store this converged simulation
+        best_prog_time <- prog_time
+        best_prog_observed <- prog_observed
+        best_prog_event <- prog_event
         break}
       adjustment_factor <- target_median/actual_median
       if (adjustment_factor >1.5) adjustment_factor <-1.5
       if (adjustment_factor <0.67) adjustment_factor <-0.67
       scale_param <- scale_param*adjustment_factor}
     if (iter == max_iterations) {
-      cat(sprintf("Warning: Progression did not fully converge after %d iterations (median: %.2f, target: %.2f)\n",max_iterations,actual_median,target_median))}
-    prog_time <- rweibull(n, shape = nv12, scale = scale_param)
-    cens_time <- runif(n, 0, max_followup)
-    prog_observed <- pmin(prog_time, cens_time)
-    prog_event <- as.numeric(prog_time <= cens_time)
-    list(time = prog_observed, event = prog_event, true_time = prog_time, iterations = iter, final_scale = scale_param)}
+      cat(sprintf("Warning: Progression did not fully converge after %d iterations (median: %.2f, target: %.2f)\n",max_iterations,actual_median,target_median))
+      # Use the last simulation even if not fully converged
+      best_prog_time <- prog_time
+      best_prog_observed <- prog_observed
+      best_prog_event <- prog_event}
+    list(time = best_prog_observed, event = best_prog_event, true_time = best_prog_time, iterations = iter, final_scale = scale_param)}
   # Simulate survival time using multi-pathway Weibull with iterative refinement
   # 1. State 1 → State 3 (death without progression): Weibull(nv13, lambda13)
   # 2. State 1 → State 2 → State 3 (death after progression): progression_time + Weibull(nv23, lambda23)
   simulate_survival <- function(n, nv13, lamb13, nv23, lamb23, target_median, prog_times, max_followup) {
     tolerance <- 0.01  # Relaxed tolerance for survival (harder to converge due to competing risks)
-    max_iterations <- 500 
+    max_iterations <- 500
     # Generate censoring times once (will be reused for consistency)
     cens_time <- runif(n, 0, max_followup)
     # For death without progression (State 1 → State 3)
@@ -126,6 +134,10 @@ server <- function(input, output, session) {
     actual_median<-target_median
     iter <- 0
     prev_median<-target_median
+    # Variables to store the best simulation
+    best_os_time <- NULL
+    best_os_observed <- NULL
+    best_os_event <- NULL
     # Iterative refinement to ensure observed median is within tolerance
     for (iter in 1:max_iterations) {
       # Simulate death without progression (State 1 → State 3)
@@ -150,16 +162,27 @@ server <- function(input, output, session) {
         if (is.na(actual_median) || actual_median == 0) {
           cat(sprintf("Warning: Cannot estimate median at iteration %d, using target\n", iter))
           actual_median <- target_median
+          best_os_time <- os_time
+          best_os_observed <- os_observed
+          best_os_event <- os_event
           break}}
-      difference <- abs(actual_median - target_median)
-      if (difference <= tolerance) {
+      difference <- actual_median - target_median
+      if (abs(difference) <= tolerance) {
         cat(sprintf("Survival converged in %d iterations (median: %.2f, target: %.2f)\n",
                     iter, actual_median, target_median))
+        # Store this converged simulation
+        best_os_time <- os_time
+        best_os_observed <- os_observed
+        best_os_event <- os_event
         break}
       # Check for oscillation (median bouncing around target)
-      if (iter > 10 && abs(prev_median - actual_median) < 0.05 && difference < 0.5) {
+      if (iter > 10 && abs(prev_median - actual_median) < 0.05 && abs(difference) < 0.5) {
         cat(sprintf("Survival converged (oscillating) in %d iterations (median: %.2f, target: %.2f)\n",
                     iter, actual_median, target_median))
+        # Store this converged simulation
+        best_os_time <- os_time
+        best_os_observed <- os_observed
+        best_os_event <- os_event
         break}
       # Adjust scale parameters to move median toward target
       # Adjust both parameters proportionally
@@ -174,20 +197,15 @@ server <- function(input, output, session) {
       prev_median <- actual_median}
     if (iter == max_iterations) {
       cat(sprintf("Warning: Survival did not fully converge after %d iterations (median: %.2f, target: %.2f, diff: %.2f)\n",
-                  max_iterations, actual_median, target_median, abs(actual_median - target_median)))}
-
-    # Final simulation with refined parameters
-    death_without_prog <- rweibull(n, shape = nv13, scale = scale_param_13)
-    death_after_prog_time <- rweibull(n, shape = nv23, scale = scale_param_23)
-    death_after_prog <- prog_times + death_after_prog_time
-    os_time <- pmin(death_without_prog, death_after_prog)
-    os_observed <- pmin(os_time, cens_time)
-    # Event = 1 if death occurred before censoring, 0 if censored
-    os_event <- as.numeric(os_time <= cens_time)
+                  max_iterations, actual_median, target_median, abs(actual_median - target_median)))
+      # Use the last simulation even if not fully converged
+      best_os_time <- os_time
+      best_os_observed <- os_observed
+      best_os_event <- os_event}
     # Verify os_event was created correctly
-    if (length(os_event)!=n||any(is.na(os_event))) {
+    if (length(best_os_event)!=n||any(is.na(best_os_event))) {
       stop("Error: os_event not properly generated")}
-    list(time = os_observed, event = os_event, true_time = os_time, iterations = iter,
+    list(time = best_os_observed, event = best_os_event, true_time = best_os_time, iterations = iter,
          final_scale_13 = scale_param_13, final_scale_23 = scale_param_23)}
   # Reactive simulation
   simulated_data <- eventReactive(input$simulate, {
